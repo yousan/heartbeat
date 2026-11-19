@@ -1,0 +1,13 @@
+[Unit]
+Description=Dead man's switch heartbeat (beats only while the gateway answers)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# systemd user services start with a minimal PATH; make curl and gh findable.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Optional overrides (HEARTBEAT_REPO, HEARTBEAT_GATEWAY_URL, GH_TOKEN).
+EnvironmentFile=-%h/.config/heartbeat/env
+ExecStart=%h/.local/bin/heartbeat-beat
+TimeoutStartSec=60

@@ -1,0 +1,16 @@
+#!/bin/sh
+# Host side of the dead man's switch.
+# Records "now" in the LAST_BEAT repository variable, but only while the
+# gateway answers. If the gateway (or the whole host) is down, no beat is
+# sent and the GitHub-side check notices that the beat went stale.
+set -eu
+
+REPO="${HEARTBEAT_REPO:-yousan/heartbeat}"
+GATEWAY_URL="${HEARTBEAT_GATEWAY_URL:-http://127.0.0.1:18789/}"
+
+if ! curl -fsS --max-time 5 -o /dev/null "$GATEWAY_URL"; then
+  echo "heartbeat: gateway did not respond; no beat sent" >&2
+  exit 1
+fi
+
+gh variable set LAST_BEAT -R "$REPO" --body "$(date +%s)"
