@@ -39,7 +39,10 @@ curl gateway ── ok ──> gh variable set     read LAST_BEAT
   Logs never contain the bot token, the user id, the DM channel id, or a host
   name.
 
-Expected delay: the alert fires 20–27 minutes after the last beat. The run
+Expected delay: the alert fires 20–27 minutes after the last beat. GitHub
+fixes `vars.LAST_BEAT` when a run is queued, not when it starts, so each run
+sees the value from about 5 minutes earlier; this never delays the stale
+alert (a stale beat stays stale), and recovery is noticed one run later. The run
 list shows one `workflow_dispatch` run by `github-actions[bot]` about every
 5–6 minutes; a `schedule` run that arrives while the chain is going shows up
 as cancelled or simply continues the chain, which is expected.
