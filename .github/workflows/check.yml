@@ -1,5 +1,12 @@
 name: heartbeat check
 
+# GitHub's `schedule` is best-effort: runs can be delayed for hours or dropped.
+# So every check run dispatches the next one with GITHUB_TOKEN (workflow_dispatch
+# is the documented exception that still creates runs), then waits ~5 minutes
+# before it ends. The concurrency group below keeps exactly one chain: one run
+# in progress and at most one pending; a newer pending run replaces an older
+# one. `schedule` only restarts the chain if it ever breaks.
+
 on:
   schedule:
     - cron: "*/10 * * * *"
@@ -11,18 +18,27 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: write # commit state/status.json
+  actions: write # dispatch the next run
 
 concurrency:
-  group: heartbeat-check
+  group: ${{ inputs.test && 'heartbeat-test' || 'heartbeat-check' }}
   cancel-in-progress: false
+
+env:
+  WAIT_SECONDS: "270"
 
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
+      # The current tip of the branch, not the commit the run was created
+      # for: a queued run's commit can be older than the state file the
+      # previous run just committed, and an old state file would repeat a DM.
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref_name }}
 
       - name: Send test DM
         if: ${{ inputs.test }}
@@ -32,6 +48,15 @@ jobs:
         run: |
           now="$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')"
           .github/scripts/notify.sh "🧪 ハートビート監視のテスト通知です (${now}) / Heartbeat monitor test message (${now})"
+
+      - name: Dispatch the next check
+        id: dispatch
+        if: ${{ !inputs.test }}
+        continue-on-error: true # never let a failed dispatch skip the check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.event.repository.default_branch }}
+        run: .github/scripts/dispatch-next.sh
 
       - name: Check heartbeat
         if: ${{ !inputs.test }}
@@ -53,8 +78,19 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -q -m "state: $(jq -r .status state/status.json)"
           for _ in 1 2 3; do
-            if git push -q origin HEAD:main; then exit 0; fi
-            git pull -q --rebase origin main
+            if git push -q origin "HEAD:$GITHUB_REF_NAME"; then exit 0; fi
+            git pull -q --rebase origin "$GITHUB_REF_NAME"
           done
           echo "could not push the state file" >&2
           exit 1
+
+      - name: Wait before handing over to the next run
+        if: ${{ always() && !inputs.test }}
+        run: sleep "$WAIT_SECONDS"
+
+      - name: Dispatch the next check (retry)
+        if: ${{ always() && !inputs.test && steps.dispatch.outputs.dispatched != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.event.repository.default_branch }}
+        run: .github/scripts/dispatch-next.sh --strict
