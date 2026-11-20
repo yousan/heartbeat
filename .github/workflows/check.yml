@@ -33,11 +33,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      # Always the current tip of the default branch: a dispatched run's own
-      # commit can be older than the state the previous run just committed.
+      # The current tip of the branch, not the commit the run was created
+      # for: a queued run's commit can be older than the state file the
+      # previous run just committed, and an old state file would repeat a DM.
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ github.ref_name }}
 
       - name: Send test DM
         if: ${{ inputs.test }}
@@ -51,6 +52,7 @@ jobs:
       - name: Dispatch the next check
         id: dispatch
         if: ${{ !inputs.test }}
+        continue-on-error: true # never let a failed dispatch skip the check
         env:
           GH_TOKEN: ${{ github.token }}
           REF: ${{ github.event.repository.default_branch }}
@@ -76,8 +78,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -q -m "state: $(jq -r .status state/status.json)"
           for _ in 1 2 3; do
-            if git push -q origin HEAD:main; then exit 0; fi
-            git pull -q --rebase origin main
+            if git push -q origin "HEAD:$GITHUB_REF_NAME"; then exit 0; fi
+            git pull -q --rebase origin "$GITHUB_REF_NAME"
           done
           echo "could not push the state file" >&2
           exit 1
