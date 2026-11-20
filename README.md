@@ -8,7 +8,7 @@ comes back, one more DM says so. Nothing is sent in between.
 ## How it works
 
 ```
-host (every 5 min)                         GitHub Actions (every 10 min)
+host (every 5 min)                         GitHub Actions (about every 5 min)
 ──────────────────                         ─────────────────────────────
 curl gateway ── ok ──> gh variable set     read LAST_BEAT
      │                  LAST_BEAT=<now>    older than 20 min?  ── stale
@@ -22,20 +22,31 @@ curl gateway ── ok ──> gh variable set     read LAST_BEAT
   5 minutes. It updates the repository variable `LAST_BEAT` (unix seconds)
   only when the gateway health URL (default `http://127.0.0.1:18789/`)
   answers within 5 seconds.
-- **GitHub side** (`.github/workflows/check.yml`): runs on a 10-minute
-  schedule. `LAST_BEAT` older than 20 minutes counts as stale. The last known
-  status is kept in `state/status.json`, committed with the workflow's own
-  `GITHUB_TOKEN` (no personal access token). The file is also rewritten at
-  least once a week, so the repository never goes 60 days without activity
-  (GitHub disables schedules in public repositories after that).
+- **GitHub side** (`.github/workflows/check.yml`): a chain of short runs.
+  Each run queues the next one with `workflow_dispatch` (allowed with
+  `GITHUB_TOKEN`, no personal access token), checks `LAST_BEAT`, then waits
+  about 5 minutes before it ends, so a check happens roughly every 5–6
+  minutes. A concurrency group keeps exactly one chain (one run in progress,
+  at most one pending). The 10-minute `schedule` is only a backup that
+  restarts the chain if it ever breaks: GitHub's schedule is best-effort and
+  can be hours late or skipped. `LAST_BEAT` older than 20 minutes counts as
+  stale. The last known status is kept in `state/status.json`, committed with
+  `GITHUB_TOKEN`. The file is also rewritten at least once a week, so the
+  repository never goes 60 days without activity (GitHub disables schedules
+  in public repositories after that).
 - **The DM**: the bot opens a DM channel with the maintainer and posts one
   short line in Japanese and English with the time the heartbeat went stale.
   Logs never contain the bot token, the user id, the DM channel id, or a host
   name.
 
-Expected delay: the alert fires 20–30 minutes after the last beat, plus
-however late GitHub starts the scheduled run (usually a few minutes, more at
-busy times).
+Expected delay: the alert fires 20–27 minutes after the last beat. The run
+list shows one `workflow_dispatch` run by `github-actions[bot]` about every
+5–6 minutes; a `schedule` run that arrives while the chain is going shows up
+as cancelled or simply continues the chain, which is expected.
+
+To pause the checks: `gh workflow disable check.yml`. To start the chain
+again: `gh workflow enable check.yml` and
+`gh workflow run check.yml -f test=false` (or wait for a `schedule` run).
 
 ### Repository settings
 
@@ -49,7 +60,8 @@ busy times).
 
 - **Actions → heartbeat check → Run workflow** with `test` checked sends one
   test DM and changes nothing else.
-- With `test` unchecked it runs the normal check immediately.
+- With `test` unchecked it joins the chain: it runs as soon as the current
+  run ends and takes over from the pending one.
 
 ```sh
 gh workflow run check.yml -R yousan/heartbeat -f test=true
